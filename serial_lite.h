@@ -11,7 +11,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-
 namespace serial {
 
 /**
@@ -32,21 +31,26 @@ struct SerialInfo {
      */
     static std::vector<SerialInfo> list_port() {
         std::vector<SerialInfo> serial_info_list;
-        for (const auto& device_name : glob_device()) {
-            SerialInfo info;
-            info.port_name = device_name;
-            info.port_path = "/dev/" + device_name;
-            std::string sys_device_path = get_sys_device_path(device_name);
-            if (!sys_device_path.empty()) {
-                info.product_id = stoul(read_line(sys_device_path + "/idProduct"), nullptr, 16);
-                info.vendor_id = stoul(read_line(sys_device_path + "/idVendor"), nullptr, 16);
-                info.product = read_line(sys_device_path + "/product");
-                info.manufacturer = read_line(sys_device_path + "/manufacturer");
-                info.serial_number = read_line(sys_device_path + "/serial");
-            }
-            serial_info_list.emplace_back(info);
+        for (const auto& device_path : glob_device()) {
+            serial_info_list.emplace_back(get_info(device_path));
         }
         return serial_info_list;
+    }
+
+    static SerialInfo get_info(const std::string& device_path) {
+        std::string device_name = std::filesystem::path(device_path).filename();
+        SerialInfo info;
+        info.port_name = device_name;
+        info.port_path = device_path;
+        std::string sys_device_path = get_sys_device_path(device_name);
+        if (!sys_device_path.empty()) {
+            info.product_id = stoul(read_line(sys_device_path + "/idProduct"), nullptr, 16);
+            info.vendor_id = stoul(read_line(sys_device_path + "/idVendor"), nullptr, 16);
+            info.product = read_line(sys_device_path + "/product");
+            info.manufacturer = read_line(sys_device_path + "/manufacturer");
+            info.serial_number = read_line(sys_device_path + "/serial");
+        }
+        return info;
     }
 
     friend std::ostream& operator<<(std::ostream& os, const SerialInfo& s) {
@@ -61,22 +65,22 @@ struct SerialInfo {
 
 private:
     static std::vector<std::string> glob_device() {
-        std::vector<std::string> device_names;
+        std::vector<std::string> device_path;
         for (const auto& dir_entry : std::filesystem::directory_iterator{"/dev"}) {
             if (dir_entry.path().filename().string().find("ttyACM") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
             if (dir_entry.path().filename().string().find("ttyS") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
             if (dir_entry.path().filename().string().find("ttyUSB") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
             if (dir_entry.path().filename().string().find("tty.") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
             if (dir_entry.path().filename().string().find("cu.") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
             if (dir_entry.path().filename().string().find("rfcomm") == 0)
-                device_names.emplace_back(dir_entry.path().filename());
+                device_path.emplace_back(dir_entry.path());
         }
-        return device_names;
+        return device_path;
     }
 
     static std::string get_sys_device_path(const std::string& device_name) {
