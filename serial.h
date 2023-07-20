@@ -3,15 +3,14 @@
 
 #include <string>
 #include <cstring>
-#include <cstdlib>
 #include <vector>
 #include <fstream>
+#include <iomanip>
+#include <filesystem>
 #include <termios.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <glob.h>
-#include <sys/stat.h>
-#include <iomanip>
+
 
 namespace serial {
 
@@ -20,6 +19,7 @@ namespace serial {
  */
 struct SerialInfo {
     std::string port_name;
+    std::string port_path;
     unsigned short product_id{};
     unsigned short vendor_id{};
     std::string product;
@@ -30,13 +30,13 @@ struct SerialInfo {
      * @brief List serial device info
      * @return Serial device info
      */
-    static std::vector<SerialInfo> ListPort() {
+    static std::vector<SerialInfo> list_port() {
         std::vector<SerialInfo> serial_info_list;
-        std::vector<std::string> device_names(glob_device());
-        for (std::vector<std::string>::const_iterator it = device_names.begin(); it != device_names.end(); ++it) {
+        for (const auto& device_name : glob_device()) {
             SerialInfo info;
-            info.port_name = *it;
-            std::string sys_device_path = get_sys_device_path(*it);
+            info.port_name = device_name;
+            info.port_path = "/dev/" + device_name;
+            std::string sys_device_path = get_sys_device_path(device_name);
             if (!sys_device_path.empty()) {
                 info.product_id = stoul(read_line(sys_device_path + "/idProduct"), nullptr, 16);
                 info.vendor_id = stoul(read_line(sys_device_path + "/idVendor"), nullptr, 16);
@@ -50,62 +50,47 @@ struct SerialInfo {
     }
 
     friend std::ostream& operator<<(std::ostream& os, const SerialInfo& s) {
-        os  << s.port_name << ", "
+        os  << s.port_path << ", "
             << std::setfill('0') << std::setw(4) << std::right << std::hex << s.product_id << ":"
             << std::setfill('0') << std::setw(4) << std::right << std::hex << s.vendor_id << ", "
             << s.manufacturer << ", "
             << s.product << ", "
             << s.serial_number;
+        return os;
     }
 
 private:
     static std::vector<std::string> glob_device() {
         std::vector<std::string> device_names;
-        std::vector<std::string> patterns {
-                "/dev/ttyACM*",
-                "/dev/ttyS*",
-                "/dev/ttyUSB*",
-                "/dev/tty.*",
-                "/dev/cu.*",
-                "/dev/rfcomm*"
-        };
-        glob_t glob_results;
-        int glob_retval = glob(patterns[0].c_str(), 0, nullptr, &glob_results);
-        std::vector<std::string>::const_iterator iter = patterns.begin();
-        while(++iter != patterns.end())
-            glob_retval = glob(iter->c_str(), GLOB_APPEND, nullptr, &glob_results);
-        for(int path_index = 0; path_index < glob_results.gl_pathc; path_index++) {
-            std::string path_found(glob_results.gl_pathv[path_index]);
-            device_names.emplace_back(path_found.substr(path_found.rfind('/') + 1, std::string::npos));
+        for (const auto& dir_entry : std::filesystem::directory_iterator{"/dev"}) {
+            if (dir_entry.path().filename().string().find("ttyACM") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
+            if (dir_entry.path().filename().string().find("ttyS") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
+            if (dir_entry.path().filename().string().find("ttyUSB") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
+            if (dir_entry.path().filename().string().find("tty.") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
+            if (dir_entry.path().filename().string().find("cu.") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
+            if (dir_entry.path().filename().string().find("rfcomm") == 0)
+                device_names.emplace_back(dir_entry.path().filename());
         }
-        globfree(&glob_results);
         return device_names;
     }
 
     static std::string get_sys_device_path(const std::string& device_name) {
-        char path_template[] = "/sys/class/tty/%s/device";
-        size_t len = snprintf(nullptr, 0, path_template, device_name.c_str());
-        char* device_path = new char[len + 1];
-        std::snprintf(device_path, len + 1, path_template, device_name.c_str());
-        char* real_device_path_buf = realpath(device_path, nullptr);
-        delete[] device_path;
-        std::string real_device_path;
-        if (real_device_path_buf != nullptr) {
-            real_device_path = real_device_path_buf;
-            free(real_device_path_buf);
+        std::filesystem::path device_path = "/sys/class/tty";
+        device_path = std::filesystem::canonical(device_path / device_name / "device");
+        if (device_name.compare(0, 6, "ttyUSB") == 0) {
+            device_path = device_path.parent_path().parent_path();
+        } else if (device_name.compare(0, 6, "ttyACM") == 0) {
+            device_path = device_path.parent_path();
+        } else {
+            return {};
         }
-        std::string sys_device_path;
-        size_t pos;
-        if (device_name.compare(0,6,"ttyUSB") == 0) {
-            pos = real_device_path.rfind('/');
-            pos = real_device_path.rfind('/', pos - 1);
-            sys_device_path = real_device_path.substr(0, pos);
-        } else if (device_name.compare(0,6,"ttyACM") == 0) {
-            pos = real_device_path.rfind('/');
-            sys_device_path = real_device_path.substr(0, pos);
-        }
-        if (path_exists(sys_device_path)) {
-            return sys_device_path;
+        if (std::filesystem::exists(device_path)) {
+            return device_path;
         }
         return {};
     }
@@ -116,15 +101,6 @@ private:
         if(ifs)
             getline(ifs, line);
         return line;
-    }
-
-    static bool path_exists(const std::string& path) {
-        struct stat sb;
-        if (path.empty())
-            return false;
-        if(stat(path.c_str(), &sb) == 0 )
-            return true;
-        return false;
     }
 };
 
@@ -138,7 +114,7 @@ public:
    * @param port_name port name, i.e. /dev/ttyUSB0
    * @param baudrate serial baudrate
    */
-    Serial(const std::string port_name, const int baudrate) : port_name_(port_name),
+    Serial(const std::string& port_name, const int baudrate) : port_name_(port_name),
                                                   baudrate_(baudrate),
                                                   data_bits_(8),
                                                   parity_bits_('N'),
@@ -148,22 +124,22 @@ public:
    * @brief Destructor of serial device to close the device
    */
     ~Serial() {
-        CloseDevice();
+        close_device();
     }
 
     /**
    * @brief Initialization of serial device to config and open the device
    * @return True if success
    */
-    bool Init() {
+    bool init() {
         if (port_name_.c_str() == nullptr)
             return false;
-        if (OpenDevice() && ConfigDevice()) {
+        if (open_device() && config_device()) {
             FD_ZERO(&serial_fd_set_);
             FD_SET(serial_fd_, &serial_fd_set_);
             return true;
         } else {
-            CloseDevice();
+            close_device();
             return false;
         }
     }
@@ -174,17 +150,17 @@ public:
    * @param len Read data length
    * @return -1 if failed, else the read length
    */
-    size_t Read(uint8_t *buf, size_t len) {
+    size_t read(uint8_t *buf, size_t len) {
         size_t ret = -1;
         if (nullptr == buf) {
             return -1;
         } else {
-            ret = read(serial_fd_, buf, len);
+            ret = ::read(serial_fd_, buf, len);
             while (ret == 0) {
-                while (!Init()) {
+                while (!init()) {
                     usleep(500000);
                 }
-                ret = read(serial_fd_, buf, len);
+                ret = ::read(serial_fd_, buf, len);
             }
             return ret;
         }
@@ -196,8 +172,8 @@ public:
    * @param len Send data length
    * @return < 0 if failed, else the send length
    */
-    size_t Write(const uint8_t *buf, size_t len) const {
-        return write(serial_fd_, buf, len);
+    size_t write(const uint8_t *buf, size_t len) const {
+        return ::write(serial_fd_, buf, len);
     }
 
 private:
@@ -205,7 +181,7 @@ private:
    * @brief Open the serial device
    * @return True if open successfully
    */
-    bool OpenDevice() {
+    bool open_device() {
 #ifdef __arm__
         serial_fd_ = open(port_name_.c_str(), O_RDWR | O_NONBLOCK);
 #elif __x86_64__
@@ -222,7 +198,7 @@ private:
    * @brief Close the serial device
    * @return True if close successfully
    */
-    bool CloseDevice() {
+    bool close_device() {
         close(serial_fd_);
         serial_fd_ = -1;
         return true;
@@ -232,7 +208,7 @@ private:
    * @brief Configure the device
    * @return True if configure successfully
    */
-    bool ConfigDevice() {
+    bool config_device() {
         int st_baud[] = {B4800, B9600, B19200, B38400,
                          B57600, B115200, B230400, B921600};
         int std_rate[] = {4800, 9600, 19200, 38400, 57600, 115200,

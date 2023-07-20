@@ -14,7 +14,7 @@ using namespace std;
 using namespace serial;
 
 int main(int argc, char* argv[]) {
-    for (const auto& port : SerialInfo::ListPort()) {
+    for (const auto& port : SerialInfo::list_port()) {
         cout << port << endl;
     }
 }
@@ -33,10 +33,10 @@ int main(int argc, char* argv[]) {
     Serial serial("ttyACM0", 115200);
     uint8_t buf[10];
 
-    serial.Init();
+    serial.init();
     while (true) {
-        serial.Read(buf, 10);
-        serial.Write(buf, 10);
+        serial.read(buf, 10);
+        serial.write(buf, 10);
     }
 }
 ```
