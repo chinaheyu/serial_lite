@@ -8,7 +8,7 @@ This library is very intuitive to use, here is an example of how it can be used 
 
 ```c++
 #include <iostream>
-#include "serial.h"
+#include "serial_lite.h"
 
 using namespace std;
 using namespace serial;
@@ -24,7 +24,7 @@ The next example shows how to send and receive serial data.
 
 ```c++
 #include <iostream>
-#include "serial.h"
+#include "serial_lite.h"
 
 using namespace std;
 using namespace serial;
