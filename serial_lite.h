@@ -279,8 +279,8 @@ private:
         else
             new_termios_.c_cflag &= ~CSTOPB; //8N1 default config
         /* config waiting time & min number of char */
-        new_termios_.c_cc[VTIME] = 1;
-        new_termios_.c_cc[VMIN] = 18;
+        new_termios_.c_cc[VTIME] = 10;      // Wait for up to 1s (10 deciseconds)
+        new_termios_.c_cc[VMIN] = 1;        // Returning as soon as any data is received
         /* using the raw data mode */
         new_termios_.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
         new_termios_.c_oflag &= ~OPOST;
