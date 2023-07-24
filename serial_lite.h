@@ -10,6 +10,8 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/serial.h>
 
 namespace serial {
 
@@ -120,9 +122,9 @@ public:
    */
     Serial(const std::string& port_name, const int baudrate) : port_name_(port_name),
                                                   baudrate_(baudrate),
+                                                  stop_bits_(1),
                                                   data_bits_(8),
-                                                  parity_bits_('N'),
-                                                  stop_bits_(1) {}
+                                                  parity_bits_('N') {}
 
     /**
    * @brief Destructor of serial device to close the device
@@ -148,25 +150,37 @@ public:
         }
     }
 
+    long long wait_readable(long long nanosecond) {
+        // Setup a select call to block for serial data or a timeout
+        FD_ZERO(&serial_fd_set_);
+        FD_SET(serial_fd_, &serial_fd_set_);
+
+        timespec timeout_ts;
+        timeout_ts.tv_sec = nanosecond / (long long)1e9;
+        timeout_ts.tv_nsec = nanosecond % (long long)1e9;
+
+        int r = pselect(serial_fd_ + 1, &serial_fd_set_, NULL, NULL, &timeout_ts, NULL);
+
+        if (r <= 0)
+            return -1;
+        
+        // Get avaliable bytes
+        ioctl(serial_fd_, FIONREAD, &r);
+
+        return r;
+    }
+
     /**
    * @brief Serial device read function
    * @param buf Given buffer to be updated by reading
    * @param len Read data length
    * @return -1 if failed, else the read length
    */
-    size_t read(uint8_t *buf, size_t len) {
-        size_t ret = -1;
+    long long read(uint8_t *buf, size_t len) {
         if (nullptr == buf) {
             return -1;
         } else {
-            ret = ::read(serial_fd_, buf, len);
-            while (ret == 0) {
-                while (!init()) {
-                    usleep(500000);
-                }
-                ret = ::read(serial_fd_, buf, len);
-            }
-            return ret;
+            return ::read(serial_fd_, buf, len);;
         }
     }
 
@@ -176,7 +190,7 @@ public:
    * @param len Send data length
    * @return < 0 if failed, else the send length
    */
-    size_t write(const uint8_t *buf, size_t len) const {
+    long long write(const uint8_t *buf, size_t len) const {
         return ::write(serial_fd_, buf, len);
     }
 
@@ -186,13 +200,7 @@ private:
    * @return True if open successfully
    */
     bool open_device() {
-#ifdef __arm__
-        serial_fd_ = open(port_name_.c_str(), O_RDWR | O_NONBLOCK);
-#elif __x86_64__
-        serial_fd_ = open(port_name_.c_str(), O_RDWR | O_NOCTTY);
-#else
-        serial_fd_ = open(port_name_.c_str(), O_RDWR | O_NOCTTY);
-#endif
+        serial_fd_ = open(port_name_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (serial_fd_ < 0)
             return false;
         return true;
@@ -203,6 +211,8 @@ private:
    * @return True if close successfully
    */
     bool close_device() {
+        if (serial_fd_ >= 0)
+            tcsetattr(serial_fd_, TCSANOW, &old_termios_);
         close(serial_fd_);
         serial_fd_ = -1;
         return true;
@@ -289,6 +299,11 @@ private:
         /* activite the configuration */
         if ((tcsetattr(serial_fd_, TCSANOW, &new_termios_)) != 0)
             return false;
+        /* low latency mode */
+        struct serial_struct kernel_serial_settings;
+        ioctl(serial_fd_, TIOCGSERIAL, &kernel_serial_settings);
+        kernel_serial_settings.flags |= ASYNC_LOW_LATENCY;
+        ioctl(serial_fd_, TIOCSSERIAL, &kernel_serial_settings);
         return true;
     }
 
